@@ -1,0 +1,15 @@
+<ForceField>
+ <!--
+ Parameters from Amber 2010
+ -->
+ <AtomTypes>
+  <Type name="amber_mg" class="" element="Mg" mass="24.30506" def="Mg" desc="Magnesium ion"/>
+  <Type name="amber_cl" class="" element="Cl" mass="35.4532" def="Cl" desc="Chlorine ion"/>
+  <Type name="amber_li" class="" element="Li" mass="6.9412" def="Li" desc="Lithium Ion"/>
+ </AtomTypes>
+ <NonbondedForce coulomb14scale="0.5" lj14scale="0.5">
+  <Atom type="amber_mg" charge="2.000" sigma="0.1412252648" epsilon="3.743248"/>
+  <Atom type="amber_cl" charge="-1.000" sigma="0.347094140587" epsilon="1.10876"/>
+  <Atom type="amber_li" charge="1.000" sigma="0.202590368505" epsilon="0.0765672"/>
+ </NonbondedForce>
+</ForceField>
