@@ -5,6 +5,7 @@ import signac
 from collections import OrderedDict
 
 data = pd.read_csv('project.csv')
+data = data[(data.il_conc != 0.3) & (data.il_conc != 0.6)]
 
 def plot_ion_d(data):
     fig, ax = plt.subplots()
