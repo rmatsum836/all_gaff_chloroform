@@ -12,10 +12,7 @@ This is a signac projects used to simulate bulk solutions of acetonitrile, chlor
 ## Usage
 The signac project can be initialized by running `python src/init.py` on the command line.  This command initializes the project and creates all of the necessary signac `jobs`.  Various commands can be executed by running `python src/project.py [command]`.
 
-Requirements
-- signac
-- mBuild
-- foyer
-- MDTraj
-- antefoyer
-- gafffoyer
+All data managed by signac can be impored to a csv file by running: `python dataframe.py`.  All plotting functions are contained within `plot_pandas.py`.
+
+### Requirements
+The list of packages and dependencies can be viewed and installed via the `environment.yml` file.
