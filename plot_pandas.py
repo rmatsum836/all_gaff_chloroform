@@ -46,9 +46,9 @@ def plot_solvent_d(data):
 
 def plot_ionicity(data):
     fig, ax = plt.subplots()
-    for charge_type in ['all_resp', 'resp']:
-        eh = data['eh_conductivity'][data.charge_type == charge_type]
-        ne = data['ne_conductivity'][data.charge_type == charge_type]
+    for charge_type in ['all_resp']:
+        eh = data['eh_bar'][data.charge_type == charge_type]
+        ne = data['ne_bar'][data.charge_type == charge_type]
         acn_conc = data['acn_conc'][data.charge_type == charge_type]
         chlor_conc = data['chlor_conc'][data.charge_type == charge_type] 
         ratio = chlor_conc / acn_conc
@@ -61,23 +61,92 @@ def plot_ionicity(data):
 
 def plot_conductivity(data):
     fig, ax = plt.subplots()
-    for charge_type in ['all_resp', 'resp']:
-        eh = data['eh_conductivity'][data.charge_type == charge_type]
-        ne = data['ne_conductivity'][data.charge_type == charge_type]
+    for charge_type in ['all_resp']:
+        eh = data['eh_bar'][data.charge_type == charge_type]
+        eh_std = data['eh_std'][data.charge_type == charge_type]
+        ne = data['ne_bar'][data.charge_type == charge_type]
+        ne_std = data['ne_std'][data.charge_type == charge_type]
         acn_conc = data['acn_conc'][data.charge_type == charge_type]
         chlor_conc = data['chlor_conc'][data.charge_type == charge_type] 
         ratio = chlor_conc / acn_conc
 
-        plt.scatter(ratio, eh, label=f'EH conductivity: {charge_type}', marker='o')
-        plt.scatter(ratio, ne, label=f'NE conductivity: {charge_type}', marker='x')
+        plt.errorbar(ratio, eh, yerr=eh_std, label=f'EH conductivity: {charge_type}', marker='o', ls='none')
+        #plt.errorbar(ratio, ne, yerr=ne_std, label=f'NE conductivity: {charge_type}', marker='x', ls='none')
 
     
         plt.xlabel('chloroform-acetonitrile ratio')
         plt.ylabel('Conductivity')
         plt.legend()
         plt.savefig('conductivity.pdf')
-   
-plot_ion_d(data)
-plot_solvent_d(data)
+
+def plot_anion_cn(data):
+    fig, ax = plt.subplots()
+    acn_an = data['cn_acn_anion']
+    chlor_an = data['cn_chlor_anion']
+    ion_an = data['cn_cation_anion']
+    acn_chlor = data['cn_acn_chlor']
+    acn_conc = data['acn_conc']
+    chlor_conc = data['chlor_conc']
+    ratio = chlor_conc / acn_conc
+
+    plt.scatter(ratio, acn_an, label='ACN-TFSI', marker='o')
+    plt.scatter(ratio, chlor_an, label='Chloroform-TFSI', marker='x')
+    plt.scatter(ratio, ion_an, label='Li-TFSI', marker='v')
+    plt.scatter(ratio, acn_chlor, label='ACN-Chloroform', marker='>')
+
+    plt.xlabel('chloroform-acetonitrile ratio')
+    plt.ylabel('Coordination Number')
+    plt.legend()
+    plt.savefig('anion_cn.pdf')
+
+def plot_cation_cn(data):
+    fig, ax = plt.subplots()
+    acn_an = data['cn_acn_cation']
+    chlor_an = data['cn_chlor_cation']
+    ion_an = data['cn_cation_anion']
+    acn_chlor = data['cn_acn_chlor']
+    acn_conc = data['acn_conc']
+    chlor_conc = data['chlor_conc']
+    ratio = chlor_conc / acn_conc
+
+    plt.scatter(ratio, acn_an, label='ACN-Li', marker='o')
+    plt.scatter(ratio, chlor_an, label='Chloroform-Li', marker='x')
+    plt.scatter(ratio, ion_an, label='Li-TFSI', marker='v')
+    plt.scatter(ratio, acn_chlor, label='ACN-Chloroform', marker='>')
+
+    plt.xlabel('chloroform-acetonitrile ratio')
+    plt.ylabel('Coordination Number')
+    plt.legend()
+    plt.savefig('cation_cn.pdf')
+
+def plot_r_distances(data):
+    fig, ax = plt.subplots()
+    combinations = [['chlor','cation'],
+                    ['chlor', 'anion'],
+                    ['acn', 'cation'],
+                    ['cation', 'anion'],
+                    ['acn', 'anion'],
+                    ['acn', 'chlor']]
+
+    acn_conc = data['acn_conc']
+    chlor_conc = data['chlor_conc']
+    ratio = chlor_conc / acn_conc
+
+    for combo in combinations:
+        combo_data = data['r_cn_{}_{}'.format(combo[0], combo[1])]
+
+        plt.scatter(ratio, combo_data, label='{}-{}'.format(combo[0], combo[1]))
+
+    plt.xlabel('chloroform:acetonitrile')
+    plt.ylabel('Distance used for Coordination Numbers (nm)')
+    plt.legend(loc='upper left', bbox_to_anchor=(1.05, 1.0))
+    plt.tight_layout()
+    plt.savefig('cn_distances.pdf')
+
+#plot_ion_d(data)
+#plot_solvent_d(data)
 plot_ionicity(data)
 plot_conductivity(data)
+#plot_cation_cn(data)
+#plot_anion_cn(data)
+#plot_r_distances(data)

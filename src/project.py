@@ -1,12 +1,10 @@
 from flow import FlowProject
 import signac
 import flow
-import pairing
 import matplotlib.pyplot as plt
 import mbuild as mb
 import mdtraj as md 
 import unyt as u
-from mtools.pairing import chunks
 from scipy import stats
 import numpy as np
 import pickle
@@ -19,23 +17,14 @@ from mtools.gromacs.gromacs import make_comtrj
 from mtools.post_process import calc_msd
 from ramtools.transport.calc_transport import calc_conductivity
 from mtools.post_process import calc_density
-from multiprocessing import Pool
-from scipy.special import gamma
 import os
 import environment
 import itertools as it
-import gzip
 import parmed as pmd
-import shutil
 import gafffoyer
 import antefoyer
 from simtk.unit import *
 
-
-def _pairing_func(x, a, b):
-    """Stretched exponential function for fitting pairing data"""
-    y = np.exp(-1 * b * x ** a)
-    return y
 
 def workspace_command(cmd):
     """Simple command to always go to the workspace directory"""
@@ -175,21 +164,15 @@ def initialize(job):
         chlor_conc = job.statepoint()['chlor_conc']
         il_conc = job.statepoint()['il_conc']
 
-        if acn_conc == 2 and chlor_conc == 3 and il_conc == 0.6:
-            pack_dim = 7 # nm
-            sys_dim = 7.5 # nm
-        elif acn_conc == 1 and chlor_conc == 1:
-            pack_dim = 7 # nm
-            sys_dim = 7.5 # nm
-        elif acn_conc == 3 and chlor_conc == 2:
-            pack_dim = 7 # nm
-            sys_dim = 7.5 # nm
-        elif acn_conc == 1 and chlor_conc == 0:
-            pack_dim = 7 # nm
-            sys_dim = 7.5 # nm
-        else:
+        if acn_conc == 2 and chlor_conc == 3 and il_conc == 0.66:
             pack_dim = 6 # nm
             sys_dim = 6.5 # nm
+        elif acn_conc == 1 and chlor_conc == 3 and il_conc == 0.33:
+            pack_dim = 6 # nm
+            sys_dim = 6.5 # nm
+        else:
+            pack_dim = 7 # nm
+            sys_dim = 7.5 # nm
         packing_box = mb.Box([pack_dim,pack_dim,pack_dim])
         system_box = mb.Box([sys_dim,sys_dim,sys_dim])
         n_chlor = int(round((n_acn * chlor_conc) / acn_conc))
@@ -378,17 +361,16 @@ def prepare(job):
 
 
 @Project.operation
-#@Project.pre.isfile(unwrapped_file)
-#@Project.post.isfile(msd_file)
+@Project.pre.isfile(unwrapped_file)
+@Project.post.isfile(msd_file)
 def run_msd(job):
     print('Loading trj {}'.format(job))
-    #top_file = os.path.join(job.workspace(), 'sample.gro')
-    top_file = os.path.join(job.workspace(), 'com.gro')
+    top_file = os.path.join(job.workspace(), 'sample.gro')
     trj_file = os.path.join(job.workspace(),
             'sample_com_unwrapped.xtc')
     trj = md.load(trj_file, top=top_file)
     selections = {'all' : trj.top.select('all'),
-                  #'ion' : trj.top.select('resname li tf2n'),
+                  'ion' : trj.top.select('resname li tf2n'),
                   'cation': trj.top.select("resname li"),
                   'anion': trj.top.select("resname tf2n"),
                   'chloroform': trj.top.select('resname chlor'),
@@ -401,165 +383,11 @@ def run_msd(job):
             print('{} does not exist in this statepoint'.format(mol))
             continue
         print(mol)
-        sliced = trj.atom_slice(indices)
-        #D, MSD = _run_overall(sliced, mol)
-        #job.document['D_' + mol + '_overall_2'] = D
-        #_save_overall(job, mol, sliced, MSD)
 
         sliced = trj.atom_slice(indices)
         D_bar, D_std = _run_multiple(sliced, mol)
-        job.document['D_' + mol + '_bar_com'] = D_bar
-        job.document['D_' + mol + '_std_com'] = D_std
-
-@Project.operation
-@Project.pre.isfile(msd_file)
-@Project.post.isfile(pair_file)
-def run_pair(job):
-    combinations = [['cation', 'anion']]
-    for combo in combinations:
-        if os.path.exists(os.path.join(job.workspace(),'direct-matrices-{}-{}.pkl.gz'.format(combo[0],combo[1]))):
-            continue
-        else:
-            print('Loading trj {}'.format(job))
-            trj_file = os.path.join(job.workspace(), 'sample.xtc')
-            top_file = os.path.join(job.workspace(), 'sample.gro')
-            trj = md.load(trj_file, top=top_file)
-            anion = job.statepoint()['anion']
-            cation = 'li'
-            sliced = trj.topology.select(f'resname {cation} {anion}')
-            distance = 0.5
-                
-            trj_slice = trj.atom_slice(sliced)
-            trj_slice = trj_slice[:-1]
-            direct_results = []
-            print('Analyzing trj {}'.format(job))
-
-            chunk_size = 500
-            for chunk in chunks(range(trj_slice.n_frames),chunk_size): #500
-                trj_chunk = trj_slice[chunk]
-                first = make_comtrj(trj_chunk[0])
-                first_direct = pairing.pairing._generate_direct_correlation(
-                                first, cutoff=distance)
-
-                # Math to figure out frame assignments for processors
-                proc_frames = (len(chunk)-1) / 16
-                remain = (trj_chunk.n_frames-1) % 16
-                index = (trj_chunk.n_frames-1) // 16
-                starts = np.empty(16)
-                ends = np.empty(16)
-                i = 1
-                j = index+1
-                for x in range(16):
-                    starts[x] = i
-                    if x < remain:
-                        j += 1
-                        i += 1
-                    ends[x] = j
-                    i += index
-                    j += index
-                starts = [int(start) for start in starts]
-                ends = [int(end) for end in ends]
-                params = [trj_chunk[i:j] for i,j in zip(starts,ends)]
-
-                print('Checking direct')
-                with Pool() as pool:
-                    directs = pool.starmap(pairing.check_pairs, zip(params,
-                            it.repeat(distance), it.repeat(first_direct)))
-                directs[0].insert(0, first_direct)
-                directs = np.asarray(directs)
-                direct_results.append(directs)
-
-                print("saving now")
-
-                with open(os.path.join(job.workspace(),'direct-matrices-{}-{}.pkl'.format(
-                  combo[0],combo[1])), 'wb') as f:
-                  pickle.dump(direct_results, f)
-
-                with open(os.path.join(job.workspace(), 'direct-matrices-{}-{}.pkl'.format(
-                  combo[0],combo[1])), 'rb') as f_in, gzip.open(os.path.join(job.workspace(),
-                  'direct-matrices-{}-{}.pkl.gz'.format(combo[0],combo[1])), 'wb') as f_out:
-                  shutil.copyfileobj(f_in, f_out)
-                print("saved")
-
-@Project.operation
-@Project.pre.isfile(pair_file)
-@Project.post.isfile(pair_fit_file)
-def run_pairing_fit_matrix(job):
-    print(job.get_id())
-    combinations = [['cation', 'anion']]
-    for combo in combinations:
-        print(combo)
-        direct_results = []
-        if os.path.exists(os.path.join(job.workspace(),'direct-matrices-{}-{}.pkl.gz'.format(combo[0],combo[1]))):
-            with gzip.open(os.path.join(job.workspace(),'direct-matrices-{}-{}.pkl.gz'.format(combo[0],combo[1])), 'rb') as f:
-                    direct_results = pickle.load(f)
-            #frames = 10000
-            #chunk_size = 500
-            frames = 1000
-            chunk_size = 50
-            overall_pairs = []
-            for chunk in direct_results:
-                for proc in chunk:
-                    for matrix in proc:
-                        pairs = []
-                        for row in matrix:
-                            N = len(row)
-                            count = len(np.where(row == 1)[0])
-                            pairs.append(count)
-                        pairs = np.sum(pairs)
-                        pairs = (pairs - N) / 2
-                        overall_pairs.append(pairs)
-
-            ratio_list = []
-            for i, pair in enumerate(overall_pairs):
-                if i % chunk_size == 0:
-                    divisor = pair
-                    ratio_list.append(1)
-                else:
-                    if pair == 0:
-                        ratio_list.append(0)
-                    else:
-                        pair_ratio = pair/ divisor
-                        ratio_list.append(pair_ratio)
-            new_ratio = []
-            i = 0
-            for j in range(chunk_size, frames, chunk_size):
-                x = ratio_list[i:j]
-                new_ratio.append(x)
-                i = j
-
-            mean = np.mean(new_ratio, axis=0)
-            # TODO: WHY is this a thing?
-            #mean = np.mean(new_ratio[:12], axis=0)
-            time_interval = [(frame * 1) for frame in range(chunk_size)]
-            time_interval = np.asarray(time_interval)
-            popt, pcov = curve_fit(_pairing_func,time_interval, mean)
-            fit = _pairing_func(time_interval,*popt)
-
-            np.savetxt(os.path.join(job.workspace(),
-                 'matrix-pairs-{}-{}.txt'.format(combo[0],combo[1])),
-                 np.column_stack((mean, time_interval, fit)),
-                 header = 'y = np.exp(-1 * b * x ** a) \n' +
-                     str(popt[0]) + ' ' + str(popt[1]))
-
-            job.document['pairing_fit_a_matrix_{}_{}'.format(combo[0],combo[1])] = popt[0]
-            job.document['pairing_fit_b_matrix_{}_{}'.format(combo[0],combo[1])] = popt[1]
-
-@Project.operation
-#@Project.pre.isfile(pair_fit_file)
-def run_tau(job):
-    combinations = [['cation', 'anion']]
-    for combo in combinations:
-        if 'pairing_fit_a_matrix_{}_{}'.format(combo[0],combo[1]) in job.document:
-            a = job.document['pairing_fit_a_matrix_{}_{}'.format(combo[0],combo[1])]
-            b = job.document['pairing_fit_b_matrix_{}_{}'.format(combo[0],combo[1])]
-            tau_pair = gamma(1 / a) * np.power(b,(-1 / a)) / a
-
-            with open(os.path.join(job.workspace(), 'tau_{}_{}.txt'.format(combo[0],combo[1])), 'w') as f:
-                f.write(str(tau_pair))
-            print('saving')
-
-            job.document['tau_pair_matrix_{}_{}'.format(combo[0],combo[1])] = tau_pair
+        job.document['D_' + mol + '_bar'] = D_bar
+        job.document['D_' + mol + '_std'] = D_std
 
 
 @Project.operation
@@ -595,10 +423,6 @@ def run_rdf(job):
             r, g_r = md.compute_rdf(trj, pairs=trj.topology.select_pairs(selections[combo[0]], selections[combo[1]]), r_range=((0.0, 2.0)))
 
             data = np.vstack([r, g_r])
-            #np.savetxt(os.path.join(job.workspace(),
-            #        'rdf-{}-{}.txt'.format(combo[0], combo[1])),
-            #    np.transpose(np.vstack([r, g_r])),
-            #    header='# r (nm)\tg(r)')
             np.savetxt('txt_files/{}-{}-{}-rdf-{}-{}.txt'.format(job.sp.chlor_conc,
                     job.sp.acn_conc, job.sp.il_conc, combo[0], combo[1]),
                 np.transpose(np.vstack([r, g_r])),
@@ -624,7 +448,6 @@ def run_cond(job):
         anion_msd = job.document()['D_anion_bar_2']
         cation_std = job.document()['D_cation_std_2']
         anion_std = job.document()['D_anion_std_2']
-        #volume = float(np.mean(trj.unitcell_volumes))*1e-27
         volume = float(np.mean(trj.unitcell_volumes)) * u.nm**3
         volume = volume.to(u.m**3)
         N = len(cation)
@@ -705,117 +528,7 @@ def run_eh_cond(job):
     job.document['eh_std'] = eh_std
 
 @Project.operation
-@Project.pre.isfile(msd_file)
-@Project.post.isfile(all_directs_file)
-def run_directs(job):
-    if job.get_id() in ['1ad289cbe7a639f71461aa6038f16f94','509a76782f2eda70bfe5c3619485b689']:
-        trj_file = os.path.join(job.workspace(), 'sample.xtc')
-    else:
-            trj_file = os.path.join(job.workspace(), 'sample.xtc')
-    top_file = os.path.join(job.workspace(), 'init.gro')
-    trj = md.load(trj_file, top=top_file)
-    combinations = [['solvent','cation']]
-    #               ['cation','anion']]
-    #                ['anion', 'anion'],
-    #                ['cation', 'cation'],
-    #                ['solvent', 'solvent']] # ['ion','ion']]
-    for combo in combinations:
-        print('Loading trj {}'.format(job))
-        anion = job.statepoint()['anion']
-        cation = job.statepoint()['cation']
-        if combo == ['solvent', 'solvent']:
-            sliced = trj.topology.select('not resname {} {}'.format(cation,anion))
-            if job.sp['solvent'] == 'ch3cn':
-                distance = 0.68
-            else:
-                distance = 0.48
-        elif combo == ['cation', 'cation']:
-            sliced = trj.topology.select('resname {} {}'.format(cation,cation))
-            distance = 0.43
-        elif combo == ['anion', 'anion']:
-            sliced = trj.topology.select('resname {} {}'.format(anion, anion))
-            if job.sp['anion'] == 'tf2n':
-                distance = 1.25
-            else:
-                distance = 0.8
-        elif combo == ['cation', 'anion']:
-            sliced = trj.topology.select('resname {} {}'.format(cation, anion))
-            if job.sp['anion'] == 'tf2n':
-                #distance = 0.55
-                distance = {'li-li': 0.48, 'tf2n-tf2n': 1.25, 'li-tf2n': 0.55, 'tf2n-li':0.55}
-            else:
-                #distance = 0.5
-                distance = {'li-li': 0.48, 'fsi-fsi': 0.8, 'li-fsi': 0.5, 'fsi-li':0.5}
-        elif combo == ['solvent', 'cation']:
-            sliced = trj.topology.select('not resname {}'.format(anion))
-            if job.sp['solvent'] == 'ch3cn':
-                distance = {'li-li': 0.48, 'li-ch3cn':0.3,
-                           'ch3cn-li':0.3, 'ch3cn-ch3cn':0.68}
-            else:
-                distance = {'li-li': 0.48, 'li-RES':0.28,
-                           'RES-li':0.28, 'RES-RES':0.45}
-        #sliced = trj.topology.select('resname ch3cn')
-        trj_slice = trj.atom_slice(sliced)
-        trj_slice = trj_slice[:-1]
-        index = trj_slice.n_frames / 16
-        starts = np.empty(16)
-        ends = np.empty(16)
-        i = 0
-        j = index
-        for x in range(16):
-            starts[x] = i
-            ends[x] = j
-            i += index
-            j += index
-        starts = [int(start) for start in starts]
-        ends = [int(end) for end in ends]
-        params = [trj_slice[i:j:10] for i,j in zip(starts,ends)]
-        results = [] 
-
-        with Pool() as pool:
-            directs = pool.starmap(pairing.mult_frames_direct, zip(params, it.repeat(distance)))
-        directs = np.asarray(directs)
- 
-        with open(os.path.join(job.workspace(),'all-directs-{}-{}.pkl'.format(
-             combo[0],combo[1])), 'wb') as f:
-            pickle.dump(directs, f)
- 
-        with open(os.path.join(job.workspace(), 'all-directs-{}-{}.pkl'.format(
-             combo[0],combo[1])), 'rb') as f_in, gzip.open(os.path.join(job.workspace(),
-             'all-directs-{}-{}.pkl.gz'.format(combo[0],combo[1])), 'wb') as f_out:
-            shutil.copyfileobj(f_in, f_out)
-
-
-@Project.operation
-@Project.pre.isfile(all_directs_file)
-@Project.post.isfile(all_indirects_file)
-def run_indirects(job):
-    combinations = [['solvent','cation']]
-    #combinations = [['cation','cation'],
-    #                ['anion', 'anion'],
-    #                ['cation', 'anion'],
-    #                ['solvent', 'solvent']] # ['ion','ion']]
-    print(job.get_id())
-    for combo in combinations:
-        with gzip.open(os.path.join(job.workspace(), 'all-directs-{}-{}.pkl.gz'.format(combo[0],combo[1])), 'rb') as f:
-            direct = pickle.load(f)
-
-        with Pool() as pool:
-            indirects = pool.map(pairing.calc_indirect, direct)
-            reducs = pool.map(pairing.calc_reduc, indirects)
-
-        with open(os.path.join(job.workspace(), 'all-indirects-{}-{}.pkl'.format(combo[0],combo[1])), 'wb') as f:
-            pickle.dump(indirects, f)
-
-        with open(os.path.join(job.workspace(), 'all-indirects-{}-{}.pkl'.format(combo[0],combo[1])), 'rb') as f_in, gzip.open(os.path.join(job.workspace(),'all-indirects-{}-{}.pkl.gz'.format(combo[0],combo[1])), 'wb') as f_out:
-            shutil.copyfileobj(f_in, f_out)
-
-        with open(os.path.join(job.workspace(), 'all-reducs-{}-{}.pkl'.format(combo[0],combo[1])), 'wb') as f:
-            pickle.dump(reducs, f)
-
-
-@Project.operation
-#@Project.post.isfile(rho_file)
+@Project.post.isfile(rho_file)
 def run_rho(job):
     print('Loading trj {}'.format(job))
     top_file = os.path.join(job.workspace(), 'sample.gro')
@@ -829,10 +542,6 @@ def run_rho(job):
 
     # Compute and store volume in nm ^ -3
     job.document['volume'] = float(np.mean(trj.unitcell_volumes))
-
-@Project.operation
-def set_charge_type(job):
-    job.sp.setdefault('charge_type', 'am1bcc')
 
 
 @Project.operation

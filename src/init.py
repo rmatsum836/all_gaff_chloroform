@@ -15,6 +15,8 @@ def main(args):
     temperatures = [298]
     anions = ['tf2n']
     charge_type = ['all_resp']
+
+    # Concentrations are ordered as : [ACN: CHLOR: SIS]
     concentrations = [
                       [1, 0, 0.33],
                       [1, 3, 0.33],
@@ -41,11 +43,6 @@ def main(args):
                     n_acn = 2000
                 elif conc == [2, 3, 0.66]:
                     n_acn = 1200
-                elif conc[0] == 3:
-                    n_acn = 667
-                    #n_acn = 1750
-                else:
-                    n_acn = 1500
                 for temp in temperatures:
                     statepoint = dict(
                                 anion=anion,
