@@ -5,6 +5,7 @@ import pairing
 import matplotlib.pyplot as plt
 import mbuild as mb
 import mdtraj as md 
+import unyt as u
 from mtools.pairing import chunks
 from scipy import stats
 import numpy as np
@@ -16,7 +17,7 @@ from util.decorators import job_chdir
 from pkg_resources import resource_filename
 from mtools.gromacs.gromacs import make_comtrj
 from mtools.post_process import calc_msd
-from ramtools.conductivity import calc_conductivity
+from ramtools.transport.calc_transport import calc_conductivity
 from mtools.post_process import calc_density
 from multiprocessing import Pool
 from scipy.special import gamma
@@ -65,9 +66,9 @@ def _save_overall(job, mol, trj, MSD):
 
 def _run_multiple(trj, mol):
     D_pop = list()
-    for start_frame in np.linspace(0, 1001, num=200, dtype=np.int):
+    for start_frame in np.linspace(0, 10001, num=200, dtype=np.int):
         end_frame = start_frame + 200
-        if end_frame < 1001:
+        if end_frame < 10001:
             chunk = trj[start_frame:end_frame]
             print('\t\t\t...frame {} to {}'.format(start_frame, end_frame))
             try:
@@ -92,7 +93,7 @@ msd_file = 'msd-all-overall_2.txt'
 pair_file = 'direct-matrices-cation-anion.pkl.gz'
 pair_fit_file = 'matrix-pairs-solvent-anion.txt'
 tau_file = 'tau.txt'
-rdf_file = 'rdf-solvent-solvent.txt'
+rdf_file = 'rdf-chlor-cation.txt'
 all_directs_file = 'all-directs-solvent-cation.pkl.gz'
 all_indirects_file = 'all-indirects-solvent-cation.pkl'
 cn_file = 'cn-cation-anion-2.txt'
@@ -119,7 +120,6 @@ def npt_equilibrated(job):
 @Project.label
 def sampled(job):
     return job.isfile(sample_file)
-
 
 @Project.label
 def prepared(job):
@@ -156,6 +156,13 @@ def rdf_done(job):
 #@Project.label
 #def cn_done(job):
 #    return job.isfile(cn_file)
+
+@Project.operation
+@flow.cmd
+def plot_energies(job):
+    cmd = 'echo 10 0 | gmx energy -f sample.edr'
+    return workspace_command(cmd)
+    
 
 @Project.operation
 @Project.post.isfile(init_file)
@@ -371,13 +378,14 @@ def prepare(job):
 
 
 @Project.operation
-@Project.pre.isfile(unwrapped_file)
-@Project.post.isfile(msd_file)
+#@Project.pre.isfile(unwrapped_file)
+#@Project.post.isfile(msd_file)
 def run_msd(job):
     print('Loading trj {}'.format(job))
-    top_file = os.path.join(job.workspace(), 'sample.gro')
+    #top_file = os.path.join(job.workspace(), 'sample.gro')
+    top_file = os.path.join(job.workspace(), 'com.gro')
     trj_file = os.path.join(job.workspace(),
-            'sample_unwrapped.xtc')
+            'sample_com_unwrapped.xtc')
     trj = md.load(trj_file, top=top_file)
     selections = {'all' : trj.top.select('all'),
                   #'ion' : trj.top.select('resname li tf2n'),
@@ -394,20 +402,19 @@ def run_msd(job):
             continue
         print(mol)
         sliced = trj.atom_slice(indices)
-        D, MSD = _run_overall(sliced, mol)
-        job.document['D_' + mol + '_overall_2'] = D
-        _save_overall(job, mol, sliced, MSD)
+        #D, MSD = _run_overall(sliced, mol)
+        #job.document['D_' + mol + '_overall_2'] = D
+        #_save_overall(job, mol, sliced, MSD)
 
         sliced = trj.atom_slice(indices)
         D_bar, D_std = _run_multiple(sliced, mol)
-        job.document['D_' + mol + '_bar_2'] = D_bar
-        job.document['D_' + mol + '_std_2'] = D_std
+        job.document['D_' + mol + '_bar_com'] = D_bar
+        job.document['D_' + mol + '_std_com'] = D_std
 
 @Project.operation
 @Project.pre.isfile(msd_file)
 @Project.post.isfile(pair_file)
 def run_pair(job):
-    print('hey')
     combinations = [['cation', 'anion']]
     for combo in combinations:
         if os.path.exists(os.path.join(job.workspace(),'direct-matrices-{}-{}.pkl.gz'.format(combo[0],combo[1]))):
@@ -420,7 +427,7 @@ def run_pair(job):
             anion = job.statepoint()['anion']
             cation = 'li'
             sliced = trj.topology.select(f'resname {cation} {anion}')
-            distance = 0.8
+            distance = 0.5
                 
             trj_slice = trj.atom_slice(sliced)
             trj_slice = trj_slice[:-1]
@@ -486,8 +493,10 @@ def run_pairing_fit_matrix(job):
         if os.path.exists(os.path.join(job.workspace(),'direct-matrices-{}-{}.pkl.gz'.format(combo[0],combo[1]))):
             with gzip.open(os.path.join(job.workspace(),'direct-matrices-{}-{}.pkl.gz'.format(combo[0],combo[1])), 'rb') as f:
                     direct_results = pickle.load(f)
-            frames = 10000
-            chunk_size = 500
+            #frames = 10000
+            #chunk_size = 500
+            frames = 1000
+            chunk_size = 50
             overall_pairs = []
             for chunk in direct_results:
                 for proc in chunk:
@@ -519,8 +528,9 @@ def run_pairing_fit_matrix(job):
                 new_ratio.append(x)
                 i = j
 
-            #mean = np.mean(new_ratio, axis=0)
-            mean = np.mean(new_ratio[:12], axis=0)
+            mean = np.mean(new_ratio, axis=0)
+            # TODO: WHY is this a thing?
+            #mean = np.mean(new_ratio[:12], axis=0)
             time_interval = [(frame * 1) for frame in range(chunk_size)]
             time_interval = np.asarray(time_interval)
             popt, pcov = curve_fit(_pairing_func,time_interval, mean)
@@ -574,7 +584,8 @@ def run_rdf(job):
                   ('acn','anion'),
                   ('acn','cation'),
                   ('chlor','anion'),
-                  ('chlor','cation')]
+                  ('chlor','cation'),
+                  ('acn', 'chlor')]
         for combo in combos:
             fig, ax = plt.subplots()
             print('running rdf between {0} ({1}) and\t{2} ({3})\t...'.format(combo[0],
@@ -584,8 +595,12 @@ def run_rdf(job):
             r, g_r = md.compute_rdf(trj, pairs=trj.topology.select_pairs(selections[combo[0]], selections[combo[1]]), r_range=((0.0, 2.0)))
 
             data = np.vstack([r, g_r])
-            np.savetxt(os.path.join(job.workspace(),
-                    'rdf-{}-{}.txt'.format(combo[0], combo[1])),
+            #np.savetxt(os.path.join(job.workspace(),
+            #        'rdf-{}-{}.txt'.format(combo[0], combo[1])),
+            #    np.transpose(np.vstack([r, g_r])),
+            #    header='# r (nm)\tg(r)')
+            np.savetxt('txt_files/{}-{}-{}-rdf-{}-{}.txt'.format(job.sp.chlor_conc,
+                    job.sp.acn_conc, job.sp.il_conc, combo[0], combo[1]),
                 np.transpose(np.vstack([r, g_r])),
                 header='# r (nm)\tg(r)')
             ax.plot(r, g_r)
@@ -607,17 +622,23 @@ def run_cond(job):
         cation = trj.topology.select('name Li')
         cation_msd = job.document()['D_cation_bar_2']
         anion_msd = job.document()['D_anion_bar_2']
-        volume = float(np.mean(trj.unitcell_volumes))*1e-27
+        cation_std = job.document()['D_cation_std_2']
+        anion_std = job.document()['D_anion_std_2']
+        #volume = float(np.mean(trj.unitcell_volumes))*1e-27
+        volume = float(np.mean(trj.unitcell_volumes)) * u.nm**3
+        volume = volume.to(u.m**3)
         N = len(cation)
         T = job.sp['T']
 
         conductivity = calc_conductivity(N, volume, cation_msd, anion_msd, T=T)
-        print(conductivity)
-        job.document['ne_conductivity'] = conductivity
+        std_conductivity = calc_conductivity(N, volume, cation_std, anion_std, T=T)
+        job.document['ne_bar'] = float(conductivity.value)
+        job.document['ne_std'] = float(std_conductivity.value)
+        print(std_conductivity)
         print('Conductivity calculated')
 
 @Project.operation
-@Project.pre.isfile(msd_file)
+#@Project.pre.isfile(msd_file)
 def run_eh_cond(job):
     print(job.get_id())
     top_file = os.path.join(job.workspace(), 'com.gro')
@@ -637,35 +658,51 @@ def run_eh_cond(job):
             new_charges.append(charge)
 
     chunk = 200 
-    running_avg = np.zeros(chunk)
-    for i,trj in enumerate(md.iterload(trj_file, top=top_file, chunk=chunk, skip=100)):
-        if i == 0:
-            trj_time = trj.time
-        if trj.n_frames != chunk:
-            continue
-        trj = trj.atom_slice(trj.top.select('resname li {}'.format(
-              job.statepoint()['anion'])))
-        M = dipole_moments_md(trj, new_charges)
-        running_avg += [np.linalg.norm((M[i] - M[0]))**2 for i in range(len(M))]
-    
-        x = (trj_time - trj_time[0]).reshape(-1)
+    overall_avg = list()
+    trj = md.load(trj_file, top=top_file)
+    for outer_chunk in range(0, 10000, 2000):
+        running_avg = np.zeros(chunk)
+        trj_outer_chunk = trj[outer_chunk:outer_chunk+2000]
+        for i, start_frame in enumerate(np.linspace(0, 2000, num=500, dtype=np.int)):
+            end_frame = start_frame + chunk
+            if end_frame < 2000: 
+                trj_chunk = trj_outer_chunk[start_frame:end_frame]
+                print('\t\t\t...frame {} to {}'.format(start_frame, end_frame))
+                if i == 0:
+                    trj_time = trj_chunk.time
+                trj_slice = trj_chunk.atom_slice(trj_chunk.top.select('resname li {}'.format(
+                      job.statepoint()['anion'])))
+                M = dipole_moments_md(trj_slice, new_charges)
+                intermediate = [np.linalg.norm((M[i] - M[0]))**2 for i in range(len(M))]  
+                plt.plot(trj_time-trj_time[0].reshape(-1), intermediate)
+                running_avg += intermediate
+
         y = running_avg / i
-
-    slope, intercept, r_value, p_value, std_error = stats.linregress(
-            x, y)
-
-    kB = 1.38e-23 * joule / kelvin
-    V = np.mean(trj_frame.unitcell_volumes, axis=0) * nanometer ** 3
-    T = job.statepoint()['T'] * kelvin
+        overall_avg.append(y) 
+   
+    x = (trj_time - trj_time[0]).reshape(-1)
     
-    sigma = slope * (elementary_charge * nanometer) ** 2 / picosecond / (6 * V * kB * T)
-    seimens = seconds ** 3 * ampere ** 2 / (kilogram * meter ** 2)
-    sigma = sigma.in_units_of(seimens / meter)
-    #print(sigma)
-    #print(job.document()['ne_conductivity'])
-    #print(job.document()['eh_conductivity'])
+    eh_list = list()
+    for y in overall_avg: 
+        slope, intercept, r_value, p_value, std_error = stats.linregress(
+                x[25:], y[25:])
 
-    job.document['eh_conductivity'] = sigma / sigma.unit
+        kB = 1.38e-23 * joule / kelvin
+        V = np.mean(trj_frame.unitcell_volumes, axis=0) * nanometer ** 3
+        T = job.statepoint()['T'] * kelvin
+        
+        sigma = slope * (elementary_charge * nanometer) ** 2 / picosecond / (6 * V * kB * T)
+        seimens = seconds ** 3 * ampere ** 2 / (kilogram * meter ** 2)
+        sigma = sigma.in_units_of(seimens / meter)
+        eh_list.append(sigma/sigma.unit)
+
+    eh_bar = np.mean(eh_list)
+    eh_std = np.std(eh_list)
+    print(eh_bar)
+    print(eh_std)
+
+    job.document['eh_bar'] = eh_bar
+    job.document['eh_std'] = eh_std
 
 @Project.operation
 @Project.pre.isfile(msd_file)
@@ -800,78 +837,95 @@ def set_charge_type(job):
 
 @Project.operation
 @Project.pre.isfile(rdf_file)
-@Project.post.isfile(cn_file)
+#@Project.post.isfile(cn_file)
 def run_cn(job):
-    combinations = [['solvent','solvent'],
-                    ['cation','cation'],
-                    ['anion','anion'],
-                    ['solvent','cation'],
+    trj = md.load_frame(os.path.join(job.workspace(), 'sample.trr'),
+                  1000,
+                  top=os.path.join(job.workspace(), 'sample.gro'))
+    volume = trj.unitcell_volumes
+    combinations = [['chlor','cation'],
+                    ['chlor', 'anion'],
+                    ['acn', 'cation'],
                     ['cation', 'anion'],
-                    ['solvent','anion']]
+                    ['acn', 'anion'],
+                    ['acn', 'chlor']]
+                    
     for combo in combinations:
+        if job.sp.il_conc in [0.3, 0.6]:
+            continue
         r, g_r = np.loadtxt(os.path.join(job.workspace(),
               'rdf-{}-{}.txt'.format(
                combo[0],combo[1]))).T
-        #if combo == ['anion', 'anion']:
-        if 'anion' in combo:
-            if 'cation' in combo:
-                if job.sp['anion'] == 'fsi':
-                    chunk = np.where((r>0.3) & (r<0.8))
-                else:
-                    chunk = np.where((r>0.45) & (r<0.8))
-            else:
-                if job.sp['anion'] == 'fsi':
-                    chunk = np.where((r>0.5) & (r<0.85))
-                else:
-                    chunk = np.where((r>0.75) & (r<1.3))
-        elif combo == ['solvent', 'solvent']:
-            if job.sp['solvent'] == 'spce':
-                chunk = np.where((r>0.3) & (r<0.55))
-            else:
-                chunk = np.where((r>0.4) & (r<0.8))
-        else:
-            chunk = np.where((r>0.3) & (r<0.8))
+
+        if combo == ['chlor', 'cation']:
+            if job.sp.chlor_conc == 0:
+                continue
+            #chunk = np.where((r>0.6) & (r<0.75))
+            chunk = np.where((r>1.0) & (r<1.20))
+        elif combo == ['chlor', 'anion']:
+            if job.sp.chlor_conc == 0:
+                continue
+            chunk = np.where((r>0.8) & (r<0.95))
+        elif combo == ['acn', 'cation']:
+            chunk = np.where((r>0.3) & (r<0.45))
+        elif combo == ['acn', 'anion']:
+            chunk = np.where((r>0.7) & (r<0.8))
+        elif combo == ['cation', 'anion']:
+            chunk = np.where((r>0.5) & (r<0.65))
+        elif combo == ['acn', 'chlor']:
+            if job.sp.chlor_conc == 0:
+                continue
+            chunk = np.where((r>0.55) & (r<0.75))
+
         g_r_chunk = g_r[chunk]
         r_chunk = r[chunk]
-        if combo == ['solvent', 'solvent']:
-             rho = (200*job.sp['concentration']) / job.document['volume']
-        elif combo == ['cation', 'cation'] or combo == ['anion', 'anion']:
-             rho = (200) / job.document['volume']
-        elif combo == ['solvent', 'cation'] or combo == ['solvent', 'anion']:
-             rho = ((200*job.sp['concentration'])+200) / job.document['volume']
+        if combo == ['chlor', 'cation']:
+             n_mols = (job.sp.il_conc * job.sp.n_acn) / job.sp.acn_conc
+             #n_mols = (job.sp.chlor_conc * job.sp.n_acn) / job.sp.acn_conc
+             rho = n_mols / volume
+        elif combo == ['chlor', 'anion']:
+             n_mols = (job.sp.il_conc * job.sp.n_acn) / job.sp.acn_conc
+             #n_mols = (job.sp.chlor_conc * job.sp.n_acn) / job.sp.acn_conc
+             rho = n_mols / volume
         elif combo == ['cation', 'anion']:
-             rho = (400 / job.document['volume'])
+             n_mols = (job.sp.il_conc * job.sp.n_acn) / job.sp.acn_conc
+             #n_mols = (job.sp.chlor_conc * job.sp.n_acn) / job.sp.acn_conc
+             rho = n_mols / volume
+        elif combo == ['acn', 'cation']:
+             n_mols = (job.sp.il_conc * job.sp.n_acn) / job.sp.acn_conc
+             #n_mols = (job.sp.n_acn)
+             rho = n_mols / volume
+        elif combo == ['acn', 'anion']:
+             n_mols = (job.sp.il_conc * job.sp.n_acn) / job.sp.acn_conc
+             #n_mols = (job.sp.n_acn)
+             rho = n_mols / volume
 
         N = [np.trapz(4 * rho * np.pi * g_r[:i] * r[:i] **2, r[:i], r) for i in range(len(r))]
 
         # Store CN near r = 0.8
         index = np.where(g_r == np.amin(g_r_chunk))
+        print(f'{job.sp.chlor_conc}-{job.sp.acn_conc}-{job.sp.il_conc}')
         print('combo is {}'.format(combo))
         print('g_r is {}'.format(g_r[index]))
         print('r is {}'.format(r[index]))
-        #index = r[maxr]
-        #if combo == 'solvent-solvent':
-        #    if job.sp['solvent'] == 'spce':
-        #        index = np.argwhere(r > 0.31)[0]
-        #    else:
-        #        index = np.argwhere(r > 0.5)[0]
-        #else:
-        #    if job.sp['anion'] == 'fsi':
-        #        index = np.argwhere(r > 0.4)[0]
-        #    else:
-        #        index = np.argwhere(r > 0.5)[0]
-
-        #if combo == 'solvent-solvent':
-        #    job.document['cn_solvent_solvent'] = N[int(index)]
-        #elif combo == 'cation-anion':
-        #    job.document['cn_cation_anion'] = N[int(index)]
+        print(N[int(index[0])])
         job.document['cn_{}_{}'.format(combo[0], combo[1])] = N[int(index[0])]
+        job.document['r_cn_{}_{}'.format(combo[0], combo[1])] = float(r[index])
+        fig, ax = plt.subplots()
+        ax.plot(r, g_r)
+        ax.plot(r, N, '--')
+        ax.scatter(r[index], g_r[index], marker='o', color='black')
+        plt.xlabel('r (nm)')
+        plt.ylabel('g(r)')
+        plt.ylim((0,25))
+        plt.savefig(os.path.join(job.workspace(), f'{combo[0]}_{combo[1]}_with_cn.pdf'))
+
         
         # Save entire CN
-        np.savetxt(os.path.join(job.workspace(),
-                  'cn-{}-{}.txt'.format(combo[0],combo[1])),
+        np.savetxt('txt_files/{}-{}-{}-cn-{}-{}.txt'.format(job.sp.chlor_conc,
+                        job.sp.acn_conc, job.sp.il_conc, combo[0],combo[1]),
                   np.transpose(np.vstack([r, N])),
-                  header='# r (nm)\tCN(r)')
+                  header='# r (nm)\tCN(r)\tr_index={}\tcn={}'.format(r[index], N[int(index[0])]))
     
 
 def _gromacs_str(op_name, gro_name, sys_name, job):

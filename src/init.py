@@ -12,19 +12,17 @@ import signac
 def main(args):
     project = signac.init_project('all_gaff_chloroform')
     statepoints_init = []
-    #for seed in range(args.num_replicas):
-    #temperatures = [223, 250, 280, 298, 323, 345]
     temperatures = [298]
-    anions = ['tf2n']#, 'fsi']
+    anions = ['tf2n']
     charge_type = ['all_resp']
-    # concentrations : [acn, chloroform, LiTFSI]
-    #concentrations = [[1, 1, 0.3]]
-    concentrations = [[3, 2, 1],
-                      [1, 0, 0.3],
-                      [1, 3, 0.3],
+    concentrations = [
+                      [1, 0, 0.33],
+                      [1, 3, 0.33],
+                      [1, 1, 0.33],
+                      [2, 3, 0.66],
                       [3, 1, 1],
-                      [1, 1, 0.3],
-                      [2, 3, 0.6]]
+                      [3, 2, 1],
+                     ]
                    
     for anion in anions:
         for charge in charge_type:
@@ -35,13 +33,13 @@ def main(args):
                     n_acn = 1750
                 elif conc == [3, 2, 1]:
                     n_acn = 1500
-                elif conc == [1, 1, 0.3]:
+                elif conc == [1, 1, 0.33]:
                     n_acn = 1500
-                elif conc == [1, 3, 0.3]:
+                elif conc == [1, 3, 0.33]:
                     n_acn = 1000
-                elif conc == [1, 0, 0.3]:
+                elif conc == [1, 0, 0.33]:
                     n_acn = 2000
-                elif conc == [2, 3, 0.6]:
+                elif conc == [2, 3, 0.66]:
                     n_acn = 1200
                 elif conc[0] == 3:
                     n_acn = 667
