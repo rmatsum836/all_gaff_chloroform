@@ -41,7 +41,7 @@ def _run_overall(trj, mol):
 
  
 def _save_overall(job, mol, trj, MSD):
-        np.savetxt(os.path.join(job.workspace(), 'msd-{}-overall_2.txt'.format    (mol)),
+        np.savetxt(os.path.join(job.workspace(), 'msd-{}-overall.txt'.format(mol)),
                         np.transpose(np.vstack([trj.time, MSD])),
                                 header='# Time (ps)\tMSD (nm^2)')
 
@@ -55,7 +55,6 @@ def _save_overall(job, mol, trj, MSD):
 
 def _run_multiple(trj, mol):
     D_pop = list()
-    #for start_frame in np.linspace(0, 10001, num=200, dtype=np.int):
     for start_frame in np.linspace(0, 10001, num=50, dtype=np.int):
         end_frame = start_frame + 5000
         if end_frame < 10001:
@@ -184,8 +183,7 @@ def initialize(job):
         chloroform = GetSolv('chlor')
         chloroform.name = 'chlor'
         
-        amber = '/raid6/homes/firstcenter/gaff_chloroform/src/'\
-                'util/lib/amber_ions.xml'
+        amber = signac.get_project().config['project_dir'] + '/src/util/lib/amber_ions.xml'
         amber = Forcefield(amber)
 
         if n_ions == 0: 
