@@ -79,14 +79,9 @@ nvt_file = 'nvt.gro'
 npt_file = 'npt.gro'
 sample_file = 'sample.gro'
 unwrapped_file = 'sample_unwrapped.xtc'
-msd_file = 'msd-all-overall_2.txt'
-pair_file = 'direct-matrices-cation-anion.pkl.gz'
-pair_fit_file = 'matrix-pairs-solvent-anion.txt'
-tau_file = 'tau.txt'
+msd_file = 'msd-all-overall.txt'
 rdf_file = 'rdf-chlor-cation.txt'
-all_directs_file = 'all-directs-solvent-cation.pkl.gz'
-all_indirects_file = 'all-indirects-solvent-cation.pkl'
-cn_file = 'cn-cation-anion-2.txt'
+cn_file = 'cn-cation-anion.txt'
 
 class Project(FlowProject):
     pass
@@ -370,14 +365,8 @@ def run_msd(job):
     trj_file = os.path.join(job.workspace(),
             'sample_com_unwrapped.xtc')
     trj = md.load(trj_file, top=top_file)
-    #selections = {'all' : trj.top.select('all'),
-    #              'ion' : trj.top.select('resname li tf2n'),
-    #              'cation': trj.top.select("resname li"),
-    #              'anion': trj.top.select("resname tf2n"),
-    #              'chloroform': trj.top.select('resname chlor'),
-    #              'ch3cn': trj.top.select('resname ch3cn')
-    #              }
-    selections = {
+    selections = {'all' : trj.top.select('all'),
+                  'ion' : trj.top.select('resname li tf2n'),
                   'cation': trj.top.select("resname li"),
                   'anion': trj.top.select("resname tf2n"),
                   'chloroform': trj.top.select('resname chlor'),
@@ -393,8 +382,8 @@ def run_msd(job):
 
         sliced = trj.atom_slice(indices)
         D_bar, D_std = _run_multiple(sliced, mol)
-        job.document['D_' + mol + '_bar_5'] = D_bar
-        job.document['D_' + mol + '_std_5'] = D_std
+        job.document['D_' + mol + '_bar'] = D_bar
+        job.document['D_' + mol + '_std'] = D_std
 
 
 @Project.operation
@@ -445,16 +434,16 @@ def run_rdf(job):
 @Project.operation
 @Project.pre.isfile(msd_file)
 def run_cond(job):
-    if 'D_cation_bar_2' in job.document().keys():
+    if 'D_cation_bar' in job.document().keys():
         top_file = os.path.join(job.workspace(), 'sample.gro')
         trj_file = os.path.join(job.workspace(),
                 'sample_unwrapped.xtc')
         trj = md.load(trj_file, top=top_file)
         cation = trj.topology.select('name Li')
-        cation_msd = job.document()['D_cation_bar_5']
-        anion_msd = job.document()['D_anion_bar_5']
-        cation_std = job.document()['D_cation_std_5']
-        anion_std = job.document()['D_anion_std_5']
+        cation_msd = job.document()['D_cation_bar']
+        anion_msd = job.document()['D_anion_bar']
+        cation_std = job.document()['D_cation_std']
+        anion_std = job.document()['D_anion_std']
         volume = float(np.mean(trj.unitcell_volumes)) * u.nm**3
         volume = volume.to(u.m**3)
         N = len(cation)
@@ -462,8 +451,8 @@ def run_cond(job):
 
         conductivity = calc_conductivity(N, volume, cation_msd, anion_msd, T=T)
         std_conductivity = calc_conductivity(N, volume, cation_std, anion_std, T=T)
-        job.document['ne_bar_5'] = float(conductivity.value)
-        job.document['ne_std_5'] = float(std_conductivity.value)
+        job.document['ne_bar'] = float(conductivity.value)
+        job.document['ne_std'] = float(std_conductivity.value)
         #print(std_conductivity)
         print('Conductivity calculated')
 
@@ -528,7 +517,7 @@ def run_eh_cond(job):
 
     plt.plot(x[25:], y[25:], color='k', linestyle='solid', label='actual')
     plt.plot(x[25:], (slope*x[25:]) + intercept, color='k', linestyle='--', label='fit')
-    plt.savefig('test_2.pdf')
+    plt.savefig('test.pdf')
 
     eh_bar = np.mean(eh_list)
     eh_std = np.std(eh_list)
@@ -600,23 +589,18 @@ def run_cn(job):
         r_chunk = r[chunk]
         if combo == ['chlor', 'cation']:
              n_mols = (job.sp.il_conc * job.sp.n_acn) / job.sp.acn_conc
-             #n_mols = (job.sp.chlor_conc * job.sp.n_acn) / job.sp.acn_conc
              rho = n_mols / volume
         elif combo == ['chlor', 'anion']:
              n_mols = (job.sp.il_conc * job.sp.n_acn) / job.sp.acn_conc
-             #n_mols = (job.sp.chlor_conc * job.sp.n_acn) / job.sp.acn_conc
              rho = n_mols / volume
         elif combo == ['cation', 'anion']:
              n_mols = (job.sp.il_conc * job.sp.n_acn) / job.sp.acn_conc
-             #n_mols = (job.sp.chlor_conc * job.sp.n_acn) / job.sp.acn_conc
              rho = n_mols / volume
         elif combo == ['acn', 'cation']:
              n_mols = (job.sp.il_conc * job.sp.n_acn) / job.sp.acn_conc
-             #n_mols = (job.sp.n_acn)
              rho = n_mols / volume
         elif combo == ['acn', 'anion']:
              n_mols = (job.sp.il_conc * job.sp.n_acn) / job.sp.acn_conc
-             #n_mols = (job.sp.n_acn)
              rho = n_mols / volume
 
         N = [np.trapz(4 * rho * np.pi * g_r[:i] * r[:i] **2, r[:i], r) for i in range(len(r))]
@@ -628,10 +612,8 @@ def run_cn(job):
         print('g_r is {}'.format(g_r[index]))
         print('r is {}'.format(r[index]))
         print(N[int(index[0])])
-        #if combo == ['acn', 'anion']:
-        #     print(job.document()['cn_acn_anion'])
-        job.document['cn_{}_{}_2'.format(combo[0], combo[1])] = N[int(index[0])]
-        job.document['r_cn_{}_{}_2'.format(combo[0], combo[1])] = float(r[index])
+        job.document['cn_{}_{}'.format(combo[0], combo[1])] = N[int(index[0])]
+        job.document['r_cn_{}_{}'.format(combo[0], combo[1])] = float(r[index])
         #fig, ax = plt.subplots()
         #ax.plot(r, g_r)
         #ax.plot(r, N, '--')
@@ -643,7 +625,7 @@ def run_cn(job):
 
         #
         # Save entire CN
-        np.savetxt('txt_files/{}-{}-{}-cn-{}-{}_2.txt'.format(job.sp.chlor_conc,
+        np.savetxt('txt_files/{}-{}-{}-cn-{}-{}.txt'.format(job.sp.chlor_conc,
                         job.sp.acn_conc, job.sp.il_conc, combo[0],combo[1]),
                   np.transpose(np.vstack([r, N])),
                   header='# r (nm)\tCN(r)\tr_index={}\tcn={}'.format(r[index], N[int(index[0])]))
