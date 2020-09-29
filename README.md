@@ -16,3 +16,6 @@ All data managed by signac can be impored to a csv file by running: `python data
 
 ### Requirements
 The list of packages and dependencies can be viewed and installed via the `environment.yml` file.
+
+### Use of the R.E.D Server
+The R.E.D Server was used to derive the partial charges for the acetonitrile, chloroform, and TFSI-.  To reproduce this work, start by going to the R.E.D Server [here](https://upjv.q4md-forcefieldtools.org/REDServer-Development/) and clicking the `submit` button at the top right.  Once the pop-up appears, click on the `private account` link at the bottom to submit a job to the server using your account (Create one if you haven't done so already).  The program `Gaussian09E.01` was used for this work.  The tarballs for the different molecules are contained withing the `red_server` directory as well as the uncompressed folders.
