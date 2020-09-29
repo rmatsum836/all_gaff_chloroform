@@ -55,8 +55,9 @@ def _save_overall(job, mol, trj, MSD):
 
 def _run_multiple(trj, mol):
     D_pop = list()
-    for start_frame in np.linspace(0, 10001, num=200, dtype=np.int):
-        end_frame = start_frame + 200
+    #for start_frame in np.linspace(0, 10001, num=200, dtype=np.int):
+    for start_frame in np.linspace(0, 10001, num=50, dtype=np.int):
+        end_frame = start_frame + 5000
         if end_frame < 10001:
             chunk = trj[start_frame:end_frame]
             print('\t\t\t...frame {} to {}'.format(start_frame, end_frame))
@@ -365,12 +366,18 @@ def prepare(job):
 @Project.post.isfile(msd_file)
 def run_msd(job):
     print('Loading trj {}'.format(job))
-    top_file = os.path.join(job.workspace(), 'sample.gro')
+    top_file = os.path.join(job.workspace(), 'com.gro')
     trj_file = os.path.join(job.workspace(),
             'sample_com_unwrapped.xtc')
     trj = md.load(trj_file, top=top_file)
-    selections = {'all' : trj.top.select('all'),
-                  'ion' : trj.top.select('resname li tf2n'),
+    #selections = {'all' : trj.top.select('all'),
+    #              'ion' : trj.top.select('resname li tf2n'),
+    #              'cation': trj.top.select("resname li"),
+    #              'anion': trj.top.select("resname tf2n"),
+    #              'chloroform': trj.top.select('resname chlor'),
+    #              'ch3cn': trj.top.select('resname ch3cn')
+    #              }
+    selections = {
                   'cation': trj.top.select("resname li"),
                   'anion': trj.top.select("resname tf2n"),
                   'chloroform': trj.top.select('resname chlor'),
@@ -386,8 +393,8 @@ def run_msd(job):
 
         sliced = trj.atom_slice(indices)
         D_bar, D_std = _run_multiple(sliced, mol)
-        job.document['D_' + mol + '_bar'] = D_bar
-        job.document['D_' + mol + '_std'] = D_std
+        job.document['D_' + mol + '_bar_5'] = D_bar
+        job.document['D_' + mol + '_std_5'] = D_std
 
 
 @Project.operation
@@ -444,10 +451,10 @@ def run_cond(job):
                 'sample_unwrapped.xtc')
         trj = md.load(trj_file, top=top_file)
         cation = trj.topology.select('name Li')
-        cation_msd = job.document()['D_cation_bar_2']
-        anion_msd = job.document()['D_anion_bar_2']
-        cation_std = job.document()['D_cation_std_2']
-        anion_std = job.document()['D_anion_std_2']
+        cation_msd = job.document()['D_cation_bar_5']
+        anion_msd = job.document()['D_anion_bar_5']
+        cation_std = job.document()['D_cation_std_5']
+        anion_std = job.document()['D_anion_std_5']
         volume = float(np.mean(trj.unitcell_volumes)) * u.nm**3
         volume = volume.to(u.m**3)
         N = len(cation)
@@ -455,9 +462,9 @@ def run_cond(job):
 
         conductivity = calc_conductivity(N, volume, cation_msd, anion_msd, T=T)
         std_conductivity = calc_conductivity(N, volume, cation_std, anion_std, T=T)
-        job.document['ne_bar'] = float(conductivity.value)
-        job.document['ne_std'] = float(std_conductivity.value)
-        print(std_conductivity)
+        job.document['ne_bar_5'] = float(conductivity.value)
+        job.document['ne_std_5'] = float(std_conductivity.value)
+        #print(std_conductivity)
         print('Conductivity calculated')
 
 @Project.operation
@@ -509,7 +516,7 @@ def run_eh_cond(job):
     for y in overall_avg: 
         slope, intercept, r_value, p_value, std_error = stats.linregress(
                 x[25:], y[25:])
-
+        
         kB = 1.38e-23 * joule / kelvin
         V = np.mean(trj_frame.unitcell_volumes, axis=0) * nanometer ** 3
         T = job.statepoint()['T'] * kelvin
@@ -518,6 +525,10 @@ def run_eh_cond(job):
         seimens = seconds ** 3 * ampere ** 2 / (kilogram * meter ** 2)
         sigma = sigma.in_units_of(seimens / meter)
         eh_list.append(sigma/sigma.unit)
+
+    plt.plot(x[25:], y[25:], color='k', linestyle='solid', label='actual')
+    plt.plot(x[25:], (slope*x[25:]) + intercept, color='k', linestyle='--', label='fit')
+    plt.savefig('test_2.pdf')
 
     eh_bar = np.mean(eh_list)
     eh_std = np.std(eh_list)
@@ -528,7 +539,6 @@ def run_eh_cond(job):
     job.document['eh_std'] = eh_std
 
 @Project.operation
-@Project.post.isfile(rho_file)
 def run_rho(job):
     print('Loading trj {}'.format(job))
     top_file = os.path.join(job.workspace(), 'sample.gro')
@@ -578,7 +588,7 @@ def run_cn(job):
         elif combo == ['acn', 'cation']:
             chunk = np.where((r>0.3) & (r<0.45))
         elif combo == ['acn', 'anion']:
-            chunk = np.where((r>0.7) & (r<0.8))
+            chunk = np.where((r>0.7) & (r<0.9))
         elif combo == ['cation', 'anion']:
             chunk = np.where((r>0.5) & (r<0.65))
         elif combo == ['acn', 'chlor']:
@@ -618,20 +628,22 @@ def run_cn(job):
         print('g_r is {}'.format(g_r[index]))
         print('r is {}'.format(r[index]))
         print(N[int(index[0])])
-        job.document['cn_{}_{}'.format(combo[0], combo[1])] = N[int(index[0])]
-        job.document['r_cn_{}_{}'.format(combo[0], combo[1])] = float(r[index])
-        fig, ax = plt.subplots()
-        ax.plot(r, g_r)
-        ax.plot(r, N, '--')
-        ax.scatter(r[index], g_r[index], marker='o', color='black')
-        plt.xlabel('r (nm)')
-        plt.ylabel('g(r)')
-        plt.ylim((0,25))
-        plt.savefig(os.path.join(job.workspace(), f'{combo[0]}_{combo[1]}_with_cn.pdf'))
+        #if combo == ['acn', 'anion']:
+        #     print(job.document()['cn_acn_anion'])
+        job.document['cn_{}_{}_2'.format(combo[0], combo[1])] = N[int(index[0])]
+        job.document['r_cn_{}_{}_2'.format(combo[0], combo[1])] = float(r[index])
+        #fig, ax = plt.subplots()
+        #ax.plot(r, g_r)
+        #ax.plot(r, N, '--')
+        #ax.scatter(r[index], g_r[index], marker='o', color='black')
+        #plt.xlabel('r (nm)')
+        #plt.ylabel('g(r)')
+        #plt.ylim((0,25))
+        #plt.savefig(os.path.join(job.workspace(), f'{combo[0]}_{combo[1]}_with_cn.pdf'))
 
-        
+        #
         # Save entire CN
-        np.savetxt('txt_files/{}-{}-{}-cn-{}-{}.txt'.format(job.sp.chlor_conc,
+        np.savetxt('txt_files/{}-{}-{}-cn-{}-{}_2.txt'.format(job.sp.chlor_conc,
                         job.sp.acn_conc, job.sp.il_conc, combo[0],combo[1]),
                   np.transpose(np.vstack([r, N])),
                   header='# r (nm)\tCN(r)\tr_index={}\tcn={}'.format(r[index], N[int(index[0])]))
