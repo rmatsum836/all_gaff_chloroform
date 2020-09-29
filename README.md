@@ -1,6 +1,6 @@
 # all_gaff_chloroform
 
-This is a signac projects used to simulate bulk solutions of acetonitrile, chloroform, and LiTFSI.
+The [signac](https://signac.io) project used to run and manage the molecular dynamics simulations for https://doi.org/10.1021/acs.jpcc.0c05311.
 
 ## Simulation Details
 - GAFF Force field for acetonitrile, chloroform, and TFSI- anion
